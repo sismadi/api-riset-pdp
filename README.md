@@ -1,70 +1,68 @@
-# Panduan Deploy ke GearHost
+# Panduan Deploy ke Cloudflare Workers (tanpa PHP, tanpa Docker)
 
-Paket ini berisi server Node.js/Express minimal untuk dijadikan endpoint **"API Sungguhan"**
-pada bagian 6 (Perbandingan Pemrosesan Sisi Server vs Sisi Client) di instrumen komparasi
-OpenCV.js vs face-api.js.
+Paket ini adalah **konversi dari index.php + deteksi.php** ke Cloudflare Worker (JavaScript
+murni). Fungsinya identik dengan versi PHP: status check di `/`, dan endpoint upload gambar
+di `/deteksi` yang mengukur payload & mensimulasikan waktu proses.
 
 ## Isi paket
-- `server.js` — logika server (terima upload gambar, ukur payload, simulasi waktu proses)
-- `package.json` — daftar dependensi (express, multer, cors)
-- `web.config` — konfigurasi IIS/iisnode agar GearHost menjalankan `server.js`
+
+| File | Peran | Setara dengan (versi PHP) |
+|---|---|---|
+| `src/index.js` | Seluruh logika Worker (routing `/` dan `/deteksi`) | `index.php` + `deteksi.php` |
+| `wrangler.jsonc` | Konfigurasi deploy | — |
+
+Tidak perlu Apache, tidak perlu PHP, tidak perlu Docker — Worker jalan native di edge Cloudflare.
 
 ## Langkah deploy
 
-1. **Buat CloudSite baru** (atau pakai yang sudah ada) di dashboard GearHost, pilih tipe
-   aplikasi **Node.js**.
-2. Buka menu **Publish** pada CloudSite tersebut, pilih metode **Local Git**. GearHost akan
-   memberi Anda URL Git dan kredensial (username/password) untuk push.
-3. Di komputer Anda, masuk ke folder paket ini lalu jalankan:
-   ```bash
-   git init
-   git add .
-   git commit -m "server uji sisi server"
-   git remote add gearhost <URL_GIT_DARI_GEARHOST>
-   git push gearhost master
-   ```
-4. GearHost akan otomatis menjalankan `npm install` untuk memasang `express`, `multer`, dan
-   `cors`, lalu menjalankan `server.js` melalui iisnode.
-5. Setelah deploy selesai, cek status **Running** di tab **Overview** (seperti pada dashboard
-   yang Anda tunjukkan sebelumnya), lalu buka URL preview-nya, contoh:
-   ```
-   https://nama-cloudsite-anda.gearhostpreview.com/
-   ```
-   Anda akan melihat respons JSON `{"status":"ok", ...}` — tandanya server sudah aktif.
-
-## Menghubungkan ke instrumen HTML
-
-Pada instrumen `instrumen-komparasi-opencv-faceapi.html`, bagian **6 · Perbandingan
-Pemrosesan Sisi Server vs Sisi Client**:
-
-1. Pilih mode **"Panggil API Server Sungguhan"**.
-2. Isi kolom **Endpoint URL** dengan:
-   ```
-   https://nama-cloudsite-anda.gearhostpreview.com/deteksi
-   ```
-3. Klik **"Jalankan Uji Sisi Server"** — instrumen akan mengirim frame kamera ke server ini,
-   dan latensi unggah–proses–respons akan tercatat di tabel perbandingan.
-
-Opsional: tambahkan `?delay=150` di akhir URL endpoint untuk mengatur simulasi waktu proses
-server (dalam milidetik), misalnya:
-```
-https://nama-cloudsite-anda.gearhostpreview.com/deteksi?delay=150
+### 1. Install Wrangler (kalau belum ada)
+```bash
+npm install -g wrangler
 ```
 
-## Mengganti simulasi dengan deteksi wajah sungguhan
+### 2. Login ke akun Cloudflare Anda
+```bash
+wrangler login
+```
 
-Di dalam `server.js`, cari komentar `TODO: proses deteksi wajah sungguhan di sini`. Bagian itu
-bisa diganti dengan pipeline deteksi wajah nyata, misalnya memanggil API pihak ketiga
-(Azure Face, AWS Rekognition, dll.) menggunakan `req.file.buffer` sebagai data gambarnya.
-Pertimbangkan kuota CPU Time (60 menit/hari pada tier gratis) — pipeline yang berat
-sebaiknya diuji dengan trial dalam jumlah terbatas.
+### 3. Masuk ke folder paket ini, lalu deploy
+```bash
+cd deteksi-wajah-worker
+wrangler deploy
+```
 
-## Catatan tentang batasan tier gratis GearHost
+Setelah selesai, Wrangler akan menampilkan URL Worker Anda, contoh:
+```
+https://deteksi-wajah-worker.<subdomain-anda>.workers.dev
+```
+(Berdasarkan dashboard Anda, subdomain-nya kemungkinan `sismadi.workers.dev`.)
 
-- **CPU Time**: 60 menit/hari — cukup untuk puluhan–ratusan trial ringan, tapi hindari
-  menjalankan 36-skenario-otomatis di instrumen HTML terlalu sering dalam mode server dalam
-  satu hari yang sama.
-- **Memory**: 256 MB — cukup untuk server Express sederhana ini.
-- **File System Storage**: 100 MB — cukup untuk `node_modules` dari 3 paket ini.
-- **Bandwidth**: 1 GB per periode reset — perhatikan jika gambar yang diunggah cukup besar
-  dan trial dijalankan berkali-kali.
+### 4. Uji endpoint
+```bash
+curl https://deteksi-wajah-worker.sismadi.workers.dev/
+curl -F "image=@/path/ke/foto.jpg" "https://deteksi-wajah-worker.sismadi.workers.dev/deteksi?delay=150"
+```
+
+## Menghubungkan ke instrumen HTML (index.html)
+
+Sama seperti versi PHP — pada bagian **6 · Perbandingan Pemrosesan Sisi Server vs Sisi Client**,
+pilih **"Panggil API Server Sungguhan"**, lalu isi Endpoint URL dengan:
+```
+https://deteksi-wajah-worker.sismadi.workers.dev/deteksi
+```
+
+Karena Worker otomatis HTTPS, masalah *mixed content* (yang muncul di versi Ubuntu/HTTP) tidak
+akan terjadi lagi — instrumen bisa diakses dari `https://` mana pun tanpa hambatan.
+
+## Perbedaan penting dari versi PHP/Ubuntu
+
+- **Tidak ada server untuk dikelola** — tidak ada SSH, tidak ada Apache/php.ini yang perlu
+  dikonfigurasi, tidak ada `upload_max_filesize`. Batas ukuran file (5MB) sudah dicek langsung
+  di kode (`MAX_BYTES`).
+- **Deploy dalam hitungan detik** — `wrangler deploy` cukup sekali, tanpa `scp` manual.
+- **Global by default** — Worker otomatis berjalan di banyak lokasi Cloudflare terdekat dengan
+  pengguna, tidak terpaku pada satu IP server seperti `167.99.65.190`.
+- **Mengganti simulasi dengan deteksi wajah sungguhan**: cari komentar
+  `TODO: proses deteksi wajah sungguhan di sini` di `src/index.js`. Bisa diisi dengan `fetch()`
+  ke API pihak ketiga (Azure Face, AWS Rekognition) atau ke Cloudflare Workers AI, menggunakan
+  `await file.arrayBuffer()` sebagai data gambar.
