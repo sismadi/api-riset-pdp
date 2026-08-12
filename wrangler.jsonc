@@ -1,5 +1,5 @@
 {
-  "name": "deteksi-wajah-worker",
+  "name": "api-riset-pdp",
   "main": "src/index.js",
   "compatibility_date": "2026-08-12",
   "observability": {
